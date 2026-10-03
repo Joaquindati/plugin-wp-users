@@ -1,11 +1,13 @@
 <?php
 /**
  * Plugin Name: Custom User Registration & Login
- * Plugin URI: https://tudominio.com/plugins/custom-user-login
- * Description: Plugin personalizado para agregar registro y login de usuarios en WordPress con características avanzadas de personalización.
- * Version: 1.0.0
- * Author: Tu Nombre
- * Author URI: https://tudominio.com
+ * Plugin URI: https://github.com/Joaquindati/plugin-wp-users
+ * Description: Formularios de registro y login de usuarios para WordPress por shortcode, con reCAPTCHA, verificación por email, roles y redirecciones personalizadas.
+ * Version: 1.0.1
+ * Requires at least: 5.8
+ * Requires PHP: 7.4
+ * Author: Joaquín Dati
+ * Author URI: https://joaquindati.com
  * Text Domain: custom-user-login
  * Domain Path: /languages
  * License: GPL v2 or later
@@ -19,7 +21,7 @@ if (!defined('ABSPATH')) {
 // Definir constantes del plugin
 define('CULR_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('CULR_PLUGIN_URL', plugin_dir_url(__FILE__));
-define('CULR_VERSION', '1.0.0');
+define('CULR_VERSION', '1.0.1');
 
 /**
  * Clase principal del plugin
@@ -245,8 +247,9 @@ class Custom_User_Login_Register {
         if (get_option('culr_email_verification', false)) {
             $this->send_verification_email($user_id, $email);
             
-            // Añadir meta para marcar como no verificado
-            update_user_meta($user_id, 'culr_email_verified', false);
+            // Marca explícita de no verificado: '0'. Un usuario sin la meta (registrado
+            // antes de activar la verificación, o un administrador) no queda bloqueado.
+            update_user_meta($user_id, 'culr_email_verified', '0');
             
             wp_send_json_success(array(
                 'message' => __('Registro exitoso. Por favor, verifica tu correo electrónico para activar tu cuenta.', 'custom-user-login'),
@@ -259,9 +262,11 @@ class Custom_User_Login_Register {
             }
             
             // Obtener URL de redirección
-            $redirect = isset($_POST['redirect']) && !empty($_POST['redirect']) 
-                ? esc_url_raw($_POST['redirect']) 
-                : get_option('culr_registration_redirect', home_url());
+            // sólo destinos del propio sitio: evita usar el formulario como redirección abierta
+            $default = get_option('culr_registration_redirect', home_url());
+            $redirect = !empty($_POST['redirect'])
+                ? wp_validate_redirect(esc_url_raw(wp_unslash($_POST['redirect'])), $default)
+                : $default;
             
             // Enviar respuesta exitosa
             wp_send_json_success(array(
@@ -328,7 +333,7 @@ class Custom_User_Login_Register {
         // Verificar si el email está verificado (si es requerido)
         if (get_option('culr_email_verification', false)) {
             $verified = get_user_meta($user->ID, 'culr_email_verified', true);
-            if ($verified === false || $verified === '') {
+            if ($verified === '0') {
                 // Cerrar sesión si no está verificado
                 wp_logout();
                 
@@ -340,9 +345,11 @@ class Custom_User_Login_Register {
         }
         
         // Obtener URL de redirección
-        $redirect = isset($_POST['redirect']) && !empty($_POST['redirect']) 
-            ? esc_url_raw($_POST['redirect']) 
-            : get_option('culr_login_redirect', admin_url());
+        // sólo destinos del propio sitio: evita usar el formulario como redirección abierta
+        $default = get_option('culr_login_redirect', admin_url());
+        $redirect = !empty($_POST['redirect'])
+            ? wp_validate_redirect(esc_url_raw(wp_unslash($_POST['redirect'])), $default)
+            : $default;
         
         // Enviar respuesta exitosa
         wp_send_json_success(array(
@@ -434,9 +441,9 @@ class Custom_User_Login_Register {
             if ($user_id && $token) {
                 $stored_token = get_user_meta($user_id, 'culr_verification_token', true);
                 
-                if ($stored_token && $token === $stored_token) {
+                if ($stored_token && hash_equals($stored_token, $token)) {
                     // Marcar como verificado
-                    update_user_meta($user_id, 'culr_email_verified', true);
+                    update_user_meta($user_id, 'culr_email_verified', '1');
                     delete_user_meta($user_id, 'culr_verification_token');
                     
                     // Redireccionar a página de éxito
